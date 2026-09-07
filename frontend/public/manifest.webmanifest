@@ -1,0 +1,10 @@
+{
+  "name": "VeriTransit",
+  "short_name": "VeriTransit",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1f33",
+  "theme_color": "#0b1f33",
+  "description": "Crowd-report verification & confidence dashboard for disaster coordination",
+  "icons": []
+}
