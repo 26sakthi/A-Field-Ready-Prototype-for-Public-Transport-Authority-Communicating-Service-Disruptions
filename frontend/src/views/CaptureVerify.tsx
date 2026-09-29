@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import { enqueue, flush, loadQueue, pendingCount, type QueuedAction } from "../offline/queue";
+import { idbClearDraft, idbGetDraft, idbSaveDraft } from "../offline/db";
+import { enqueue, flush, loadQueueAsync, pendingCount, type QueuedAction } from "../offline/queue";
 
 // Field Responder view: fast, one-handed capture. Works offline -- actions queue
-// locally and sync on reconnect (capture time is preserved as the truth).
+// locally in IndexedDB + localStorage and sync on reconnect (capture time is preserved as truth).
 const CATEGORIES = ["flood", "fire", "breakdown", "crowding", "delay", "safety"];
 
 export function CaptureVerify({ online }: { online: boolean }) {
@@ -11,13 +12,38 @@ export function CaptureVerify({ online }: { online: boolean }) {
   const [severity, setSeverity] = useState(4);
   const [text, setText] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>({ lat: 13.0827, lng: 80.2707 });
-  const [queue, setQueue] = useState<QueuedAction[]>(loadQueue());
+  const [queue, setQueue] = useState<QueuedAction[]>([]);
   const [msg, setMsg] = useState("");
   const [forceOffline, setForceOffline] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
 
   const effectiveOnline = online && !forceOffline;
 
-  function refreshQueue() { setQueue(loadQueue()); }
+  async function refreshQueue() {
+    const q = await loadQueueAsync();
+    setQueue(q);
+  }
+
+  // Restore draft from IndexedDB on initial mount
+  useEffect(() => {
+    refreshQueue();
+    idbGetDraft().then((draft) => {
+      if (draft && (draft.text || draft.category !== "flood" || draft.severity !== 4)) {
+        setCategory(draft.category || "flood");
+        setSeverity(draft.severity || 4);
+        setText(draft.text || "");
+        setCoords(draft.coords);
+        setDraftRestored(true);
+      }
+    });
+  }, []);
+
+  // Autosave draft to IndexedDB when user modifies input
+  useEffect(() => {
+    if (text || category !== "flood" || severity !== 4) {
+      idbSaveDraft({ category, severity, text, coords });
+    }
+  }, [category, severity, text, coords]);
 
   useEffect(() => {
     if (effectiveOnline && pendingCount() > 0) doSync();
@@ -42,23 +68,29 @@ export function CaptureVerify({ online }: { online: boolean }) {
     if (effectiveOnline) {
       try {
         await api.createReport({ ...payload, claimed_time: new Date().toISOString() });
-        setMsg("Report submitted.");
+        setMsg("Report submitted to live server.");
       } catch {
-        enqueue("report", payload); setMsg("Network failed — queued offline.");
+        enqueue("report", payload);
+        setMsg("Network failed — stored in IndexedDB offline queue.");
       }
     } else {
       enqueue("report", payload);
-      setMsg("Offline — captured locally, will sync on reconnect.");
+      setMsg("Offline — captured locally in IndexedDB, will sync on reconnect.");
     }
-    setText(""); refreshQueue();
+    setText("");
+    idbClearDraft();
+    setDraftRestored(false);
+    await refreshQueue();
   }
 
   async function doSync() {
     try {
       const n = await flush();
-      if (n) setMsg(`Synced ${n} queued action(s) as DELAYED_SYNC (capture time preserved).`);
-      refreshQueue();
-    } catch { setMsg("Sync failed — still offline."); }
+      if (n) setMsg(`Synced ${n} queued action(s) from IndexedDB as DELAYED_SYNC (capture time preserved).`);
+      await refreshQueue();
+    } catch {
+      setMsg("Sync failed — still offline.");
+    }
   }
 
   const pending = queue.filter((q) => q.status === "QUEUED").length;
@@ -66,11 +98,17 @@ export function CaptureVerify({ online }: { online: boolean }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto" }}>
       <h2 className="view-head">Field Capture & Verify</h2>
-      <p className="view-sub">Minimal fields, GPS auto-fill, offline-first.</p>
+      <p className="view-sub">Minimal fields, GPS auto-fill, offline IndexedDB storage & sync.</p>
+
+      {draftRestored && (
+        <div className="card" style={{ marginBottom: 12, borderColor: "var(--accent)", background: "rgba(59,130,246,0.08)" }}>
+          <span className="small">💾 Restored unsaved draft from IndexedDB storage.</span>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 12, borderColor: effectiveOnline ? "var(--line)" : "var(--danger)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span>{effectiveOnline ? "🟢 Online" : "🔴 Offline"} · {pending} queued</span>
+          <span>{effectiveOnline ? "🟢 Online" : "🔴 Offline"} · {pending} queued (IndexedDB)</span>
           <label className="small">
             <input type="checkbox" checked={forceOffline} onChange={(e) => setForceOffline(e.target.checked)} /> Simulate offline
           </label>
@@ -113,7 +151,7 @@ export function CaptureVerify({ online }: { online: boolean }) {
 
       {queue.length > 0 && (
         <div className="card" style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Local queue</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Local IndexedDB Queue</div>
           {queue.slice(-8).reverse().map((q) => (
             <div className="small" key={q.client_uuid} style={{ display: "flex", justifyContent: "space-between" }}>
               <span>{q.kind} · {q.payload.category ?? ""}</span>

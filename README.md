@@ -33,6 +33,7 @@ A field-ready prototype for a **public transport authority communicating service
 | System architecture | [`docs/02-System-Architecture.md`](docs/02-System-Architecture.md) |
 | Implementation plan | [`docs/03-Implementation-Plan.md`](docs/03-Implementation-Plan.md) |
 | Limitations + benefits-vs-risks report | [`docs/04-Limitations.md`](docs/04-Limitations.md) |
+| Algorithm parameters & scoring formulas | [`docs/05-Algorithm-Parameters-And-Formulas.md`](docs/05-Algorithm-Parameters-And-Formulas.md) |
 | Core algorithm / rules | [`backend/engine/`](backend/engine/) |
 | API + official-feed integration stub | [`backend/app/`](backend/app/), [`backend/simulator/official_feed_stub.py`](backend/simulator/official_feed_stub.py) |
 | Validation dataset (labelled, seeded simulator) | [`backend/simulator/generate.py`](backend/simulator/generate.py) |

@@ -8,7 +8,9 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
 
-# OS / editor
+# OS / editor / agent
 .DS_Store
 Thumbs.db
+.claude/

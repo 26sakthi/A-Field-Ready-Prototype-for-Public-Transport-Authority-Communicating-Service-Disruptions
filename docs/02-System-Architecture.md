@@ -205,6 +205,8 @@ erDiagram
 
 ## 5. Core Algorithm — Clustering, Confidence, Priority
 
+> **Full Specification:** See [`05-Algorithm-Parameters-And-Formulas.md`](05-Algorithm-Parameters-And-Formulas.md) for complete mathematical formulas, exact decay window tables ($\tau$), Haversine centroid equations, and burst detection parameters.
+
 The engine is **deterministic and rule-based** so experiments are reproducible and every score is explainable. It is structured as a pipeline; each stage is independently testable.
 
 ### 5.1 Pipeline
