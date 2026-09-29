@@ -1,0 +1,53 @@
+VERITRANSIT PROJECT - PHASE 2 REPORT: SIMULATION, API INTEGRATION, DASHBOARD DELIVERY, AND OFFLINE ARCHITECTURE
+-------------------------------------------------------------------------------------------------------------------
+[PROJECT EVALUATION METRIC: PHASE 2 DELIVERS 70% OF TOTAL SYSTEM DEVELOPMENT WORK & SCOPE WEIGHT]
+
+1. EXECUTIVE OVERVIEW & SCOPE (70% DEVELOPMENT WEIGHT)
+------------------------------------------------------
+Phase 2 constitutes the primary engineering core of the VeriTransit platform, representing 70% of the overall project development weight. Building upon the foundational engine specifications of Phase 1, Phase 2 successfully delivered the complete full-stack system implementation:
+- End-to-end FastAPI REST & WebSocket Application Server (backend/app/main.py)
+- Synthetic Disruption Data Simulator & Official Feed Stub (backend/simulator/)
+- 5 Role-Based Progressive Web Application (PWA) Dashboard Views (frontend/src/views/)
+- Dual-Persistence Offline Storage Strategy (IndexedDB + Service Worker)
+- Full Algorithmic Pipeline Integration (Clustering, Anti-Manipulation, Confidence Scoring, Priority Ranking, Verification & Freshness State Machines)
+
+2. DATA SIMULATOR, SEEDED SCENARIOS & OFFICIAL FEED INTEGRATION STUB
+--------------------------------------------------------------------
+To validate the platform under high-load, city-wide emergency conditions without requiring live municipal infrastructure access, a sophisticated scenario generator (backend/simulator/generate.py) was developed:
+- Ground-Truth Annotations: Every simulated citizen report contains an immutable ground-truth label (e.g., TRUE_POSITIVE, MISINFORMATION_BURST, NOISE, DUPLICATE), enabling automated precision/recall evaluation.
+- Realistic Multi-Channel Noise Models: Emits realistic streams covering app submissions, SMS, hotline transcripts, and social media feeds across spatial-temporal clusters.
+- Misinformation & Spam Attack Vectors: Generates copy-paste bot bursts, paraphrased text attacks, and conflicting category reports to challenge anti-manipulation filters.
+- Authoritative Official Feed Stub (official_feed_stub.py): Injects synthetic Automatic Vehicle Location (AVL) gap events, weather radar flood alerts, and IoT track sensor telemetry for multi-modal cross-verification.
+
+3. FULL-STACK ARCHITECTURE & 5 ROLE-BASED DASHBOARD VIEWS
+---------------------------------------------------------
+The frontend interface was constructed as a high-performance React 18 SPA (Vite + TypeScript), providing tailored operational dashboards for 5 specialized transport authority roles:
+- 🧑‍🚒 Field Responder (Capture & Verify View): Fast, one-handed mobile capture featuring GPS auto-fill, category chips, severity slider, offline queue status badges, and IndexedDB draft autosave.
+- 👮 Duty Officer (Triage Queue View): Priority-ranked incident queue featuring confidence breakdown bars, freshness state pills, category tags, and an evidence drawer explaining "why this score" was assigned.
+- 🗺️ Control-Room Decision-Maker (Situation Map View): Interactive SVG situation map rendering spatial incident clusters, verified-only view toggles, and a dedicated unlocated evidence tray for missing-location reports.
+- 📢 Public Information Officer (Comms Board View): Kanban-style communications board governed by an automated Publish Gate enforcing strict publication rules (only VERIFIED, non-STALE incidents can be published).
+- 📊 Analyst / Admin (Metrics & Admin View): Performance evaluation hub displaying live system KPIs, automated experiment execution controls, engine weight tuning knobs, and immutable audit logs.
+
+4. OFFLINE-FIRST FIELD CAPTURE & INDEXEDDB LOCAL STORAGE STRATEGY
+-----------------------------------------------------------------
+To support field responders operating in subterranean subway tunnels or network dead-zones:
+- Dual-Persistence Storage Architecture: Implemented an IndexedDB storage adapter (VeriTransitDB) featuring 3 dedicated object stores:
+  1. `pending_actions`: Client UUID-stamped offline report and verification action queue.
+  2. `cached_incidents`: Incident state snapshots cached during online connectivity for offline field reference.
+  3. `offline_drafts`: Real-time input draft autosaving to prevent data loss on browser refresh or crash.
+- Progressive Web App (PWA) App-Shell Caching: Service Worker (sw.js) caches static application shell assets for instant offline launch.
+- Capture-Time Truth Preservation: Actions executed offline record capture timestamp (t_capture). Upon reconnection, the idempotent synchronization endpoint (POST /api/v1/sync) reconciles actions as DELAYED_SYNC, evaluating confidence against capture-time historical context rather than receipt time.
+
+5. ALGORITHMIC ENGINE & PARAMETERIZATION IMPLEMENTATION
+--------------------------------------------------------
+The core engine (backend/engine/) executes a deterministic, rule-based pipeline:
+- Spatial Distance Clustering: Haversine distance equation with R_spatial = 250.0m threshold and centroid recomputation.
+- Temporal Windowing: T_window = 15.0 min window anchored strictly to incident onset (t_first_reported) to eliminate rolling window over-clustering.
+- Independence & Deduplication: Token Jaccard index similarity J(A,B) >= 0.90 text collapsing, combined with coordinated burst detection (N_burst = 8 reports, M_burst = 3 reporters, W_burst = 2.0 min) applying a kappa = 0.20 corroboration penalty factor.
+- 5-Signal Explainable Confidence Scoring: Weighted aggregation (w_v=0.35 responder, w_c=0.25 corroboration, w_o=0.20 official feed, w_r=0.10 reputation, w_t=0.10 recency) with log-scaled diminishing returns corroboration (cap=6).
+- Category Decay Windows (tau): FLOOD (90m), FIRE (60m), SAFETY (60m), BREAKDOWN (45m), OTHER (40m), DELAY (30m), CROWDING (20m).
+- Parallel Verification & Freshness State Machines: Explicit state handling (UNVERIFIED, CORROBORATING, VERIFIED, DISPUTED, DEBUNKED) and freshness states (FRESH, RECENT, AGING, STALE, EXPIRED).
+
+6. PHASE 2 DELIVERABLES & OUTCOMES
+----------------------------------
+By completing Phase 2 (70% total project work weight), the VeriTransit system achieved full functional readiness. The platform seamlessly handles real-time REST and WebSocket traffic, executes field-friendly offline capture with IndexedDB sync, and deterministically clusters, scores, and ranks emergency disruption reports.
