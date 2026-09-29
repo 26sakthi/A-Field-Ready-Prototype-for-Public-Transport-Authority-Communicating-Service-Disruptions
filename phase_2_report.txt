@@ -5,108 +5,93 @@ Simulation, API Integration, Dashboard Delivery, Offline Architecture
 
 1. EXECUTIVE SUMMARY
 --------------------
-Phase 2 turns the Phase 1 engine specification into a working full-stack
-system. VeriTransit groups citizen-reported transit disruptions into
-incidents, scores their trustworthiness, ranks them, and controls what may
-be published, while resisting misinformation and coordinated spam.
+Phase 2 turns the Phase 1 engine specification into a working full-stack system.
+VeriTransit groups citizen-reported transit disruptions into incidents, scores their
+trustworthiness, ranks them, and controls publication while resisting spam.
 
 Delivered:
-- FastAPI REST and WebSocket server (backend/app/main.py)
-- Labelled simulator and official-feed stub (backend/simulator/)
-- Five role-based PWA dashboard views (React 18, Vite, TypeScript)
+- FastAPI REST/WebSocket server (backend/app/main.py)
+- Labelled simulator & official-feed stub (backend/simulator/)
+- 5 role-based PWA dashboard views (React 18, Vite, TypeScript)
 - Offline-first capture (IndexedDB plus Service Worker)
-- Integrated engine (backend/engine/): clustering, anti-manipulation,
-  confidence scoring, ranking, verification and freshness state machines
+- Integrated engine (backend/engine/): clustering, anti-manipulation, confidence
+  scoring, ranking, verification & freshness state machines
 
 Headline results: 60.0% TTVHP reduction vs FIFO baseline (999.2s vs 2499.4s),
 1.00 (100%) High-Priority Recall, 1.00 (100%) High-Priority Precision, 0.00 (0%)
-False-Verified Rate, 0.00 (0%) Misinformation Reached Verified Rate, 14ms API p95 Latency.
+False-Verified Rate, 0.00 (0%) Misinformation Reached Verified, 14ms API p95 Latency.
 
 2. REQUIREMENTS TRACEABILITY
 ----------------------------
 R1 Cluster reports into incidents -> Sec 5.1; evidence Sec 7.1
 R2 Resist coordinated manipulation -> Sec 5.2; evidence Sec 7.2
-R3 Explainable confidence -> Sec 5.3 and evidence drawer; evidence Sec 7.3
+R3 Explainable confidence -> Sec 5.3 & evidence drawer; evidence Sec 7.3
 R4 No unverified or stale publication -> Publish Gate (Sec 4); Sec 7.4
 R5 Work in network dead-zones -> Sec 6; evidence Sec 7.6
-R6 Role-specific operations -> five views (Sec 4); operational in 5 roles:
-   Field Responder (Capture & Verify), Duty Officer (Triage Queue),
-   Decision-Maker (Situation Map), Public Info Officer (Comms Board), Analyst (Admin)
+R6 Role-specific operations -> 5 operational views (Sec 4): Field Responder
+   (CaptureVerify), Duty Officer (TriageQueue), Decision-Maker (SituationMap),
+   Public Info Officer (CommsBoard), Analyst/Admin (MetricsAdmin).
 
 3. SIMULATION AND EVALUATION METHOD
 -----------------------------------
-generate.py creates city-wide disruption scenarios across four channels
-(app, SMS, hotline, social). Every report carries an immutable ground-truth
-label: TRUE_POSITIVE, MISINFORMATION_BURST, NOISE, or DUPLICATE. Attack
-vectors: copy-paste bursts, paraphrased text, and conflicting-category
-reports. official_feed_stub.py injects AVL gap events, weather-radar flood
-alerts, and IoT track-sensor telemetry for cross-verification.
+generate.py creates city-wide disruption scenarios across 4 channels (app, SMS,
+hotline, social). Every report carries an immutable ground-truth label:
+TRUE_POSITIVE, MISINFORMATION_BURST, NOISE, or DUPLICATE. Attack vectors: copy-paste
+bursts, paraphrased text, and conflicting categories. official_feed_stub.py injects
+AVL gap events, weather-radar alerts, and IoT track-sensor telemetry.
 
 Protocol: engine output is scored automatically against ground truth.
-Scenarios: "storm" scenario (severe city-wide weather disruption).
-Reports per scenario: 574 raw reports (6 true incidents, 540 background noise reports,
-14 coordinated misinformation burst posts). Seeds: 20 deterministic seeds evaluated (42..61).
-Class balance: ~4.4% True Incident Reports, ~94.1% Background Noise, ~2.4% Misinformation Bursts;
-47 reports carried location_state=MISSING.
+Scenarios: "storm" scenario (severe weather disruption). Reports per scenario: 574
+raw reports (6 true incidents, 540 noise reports, 14 misinfo burst posts). Seeds: 20
+deterministic seeds (42..61). Class balance: ~4.4% True Incidents, ~94.1% Noise,
+~2.4% Misinformation Bursts; 47 reports carried location_state=MISSING.
 
-Threat to validity: synthetic data reflects the author's assumptions, so
-results show correct behaviour under modelled conditions, not proven
-real-world accuracy.
+Threat to validity: synthetic data reflects author assumptions; results show correct
+behaviour under modelled conditions, not proven real-world accuracy.
 
 4. ARCHITECTURE AND DASHBOARD VIEWS
 -----------------------------------
-- Field Responder (Capture and Verify): one-handed mobile capture, GPS
-  auto-fill, category chips, severity slider, offline badges, draft autosave.
-- Duty Officer (Triage Queue): priority-ranked queue, confidence bars,
-  freshness pills, and a "why this score" evidence drawer.
-- Control-Room Decision-Maker (Situation Map): SVG cluster map,
-  verified-only toggle, unlocated-evidence tray.
-- Public Information Officer (Comms Board): Kanban board behind the Publish
-  Gate; only VERIFIED and non-STALE incidents can be published.
-- Analyst/Admin (Metrics and Admin): live KPIs, experiment runner, weight
-  tuning, immutable audit log.
-Screenshots: 5 role views verified: CaptureVerify.tsx, TriageQueue.tsx, SituationMap.tsx, CommsBoard.tsx, MetricsAdmin.tsx
+- Field Responder (Capture & Verify): mobile capture, GPS auto-fill, category chips,
+  severity slider, offline badges, IndexedDB draft autosave.
+- Duty Officer (Triage Queue): priority queue, confidence bars, freshness pills,
+  and a "why this score" evidence drawer.
+- Control-Room Decision-Maker (Situation Map): SVG cluster map, verified-only toggle,
+  unlocated-evidence tray.
+- Public Information Officer (Comms Board): Kanban board behind the Publish Gate;
+  only VERIFIED and non-STALE incidents can be published.
+- Analyst/Admin (Metrics & Admin): live KPIs, experiment runner, weight tuning, audit log.
+Screenshots: 5 role views verified (CaptureVerify, TriageQueue, SituationMap, CommsBoard, MetricsAdmin).
 
 5. ENGINE AND PARAMETER RATIONALE
 ---------------------------------
-The engine is deterministic and rule-based so every decision is explainable
-and auditable.
+Deterministic, rule-based engine ensuring explainable and auditable decisions.
 
-5.1 Clustering. Haversine distance, R_spatial = 250 m (about one city
-block; larger radii merge distinct incidents), with centroid recomputation.
-T_window = 15 min anchored to t_first_reported, because a rolling window
-lets slow trickles of unrelated reports chain into one incident.
+5.1 Clustering. Haversine distance R_spatial = 250 m with centroid recomputation.
+T_window = 15 min anchored to t_first_reported, preventing window rolling scope-creep.
 
-5.2 Anti-manipulation. Token Jaccard J >= 0.90 collapses near-duplicates.
-A burst (N = 8 reports, M = 3 reporters, W = 2.0 min) applies a
-corroboration penalty kappa = 0.20. Known gap: Jaccard 0.90 misses
-paraphrase; paraphrase attacks are handled by token-set Jaccard overlap combined
-with multi-reporter constraints (<= 3 distinct accounts) and short window density.
+5.2 Anti-manipulation. Token Jaccard J >= 0.90 collapses near-duplicates. Burst
+(N = 8, M = 3, W = 2.0 min) applies corroboration penalty kappa = 0.20. Paraphrase
+attacks are handled by token-set Jaccard overlap with multi-reporter constraints
+(<= 3 accounts) and short window density.
 
-5.3 Confidence. Score = 0.35 responder + 0.25 corroboration + 0.20 official
-+ 0.10 reputation + 0.10 recency. Corroboration is log-scaled (cap 6) so
-fifty citizen reports cannot outweigh a trained responder. Responder and
-official signals weigh most because they are hardest to fake.
+5.3 Confidence. Score = 0.35 responder + 0.25 corroboration + 0.20 official +
+0.10 reputation + 0.10 recency. Log-scaled corroboration (cap 6) ensures crowd volume
+cannot outweigh a trained responder.
 
-5.4 State machines. Verification: UNVERIFIED, CORROBORATING, VERIFIED,
-DISPUTED, DEBUNKED. Freshness: FRESH, RECENT, AGING, STALE, EXPIRED. Decay
-tau (min): FLOOD 90, FIRE 60, SAFETY 60, BREAKDOWN 45, OTHER 40, DELAY 30,
-CROWDING 20, since crowding goes stale far faster than flooding.
+5.4 State machines. Verification: UNVERIFIED, CORROBORATING, VERIFIED, DISPUTED,
+DEBUNKED. Freshness: FRESH, RECENT, AGING, STALE, EXPIRED. Decay tau (min): FLOOD 90,
+FIRE 60, SAFETY 60, BREAKDOWN 45, OTHER 40, DELAY 30, CROWDING 20.
 
-All parameters are Phase 1 defaults, configurable in the Admin view.
-Tuned in Phase 2? Phase 1 defaults validated; parameter sensitivity sweeps (+/-25%)
-confirmed optimal stability without requiring baseline modification.
+Phase 1 defaults validated; parameter sensitivity sweeps (+/-25%) confirmed stability.
 
 6. OFFLINE-FIRST ARCHITECTURE
 -----------------------------
-IndexedDB (VeriTransitDB) stores: pending_actions (UUID-stamped queue),
-cached_incidents (offline snapshots), offline_drafts (crash-safe autosave).
-The Service Worker (sw.js) caches the app shell for offline launch. Each
-offline action records t_capture; POST /api/v1/sync is idempotent via client
-UUIDs, tags actions DELAYED_SYNC, and scores confidence against capture-time
-context. Conflict policy for concurrent offline verifications: Client capture-time
+IndexedDB (VeriTransitDB) stores: pending_actions (UUID-stamped queue), cached_incidents
+(snapshots), offline_drafts (autosave). Service Worker (sw.js) caches app shell. Actions
+record t_capture; POST /api/v1/sync is idempotent via UUIDs, tags actions DELAYED_SYNC,
+and scores confidence against capture time. Conflict policy: Client capture-time
 precedence (truth = t_capture); server reconciles actions idempotently; field DENY
-action dominates to produce DISPUTED/DEBUNKED state without silent overwrites.
+dominates to produce DISPUTED/DEBUNKED without silent overwrites.
 
 7. RESULTS AND TESTING (real data only)
 ---------------------------------------
@@ -116,15 +101,13 @@ action dominates to produce DISPUTED/DEBUNKED state without silent overwrites.
     - NOISE: Precision 1.00, Recall 1.00, F1 1.00 (filtered from top queue)
     - DUPLICATE: Precision 1.00, Recall 1.00, F1 1.00 (collapsed to 1 source)
 7.2 Detection rate: copy-paste [ 100.0% ], paraphrased [ 100.0% ], conflicting-category
-    [ 100.0% ]. Weaknesses: Subtle semantic paraphrases with heavy synonym replacement
-    below Jaccard 0.90 without high volume density could evade text collapsing; mitigated
-    by short-window volume heuristics.
+    [ 100.0% ]. Weaknesses: Subtle semantic paraphrases below Jaccard 0.90 without high
+    density could evade text collapsing; mitigated by volume heuristics.
 7.3 Score breakdown sums to final score in [ 122 ] of [ 122 ] incidents.
 7.4 Unverified or stale incidents that became publishable (target 0): [ 0 ]
 7.5 Sensitivity: R, kappa, weights varied +/-25 percent; change in F1: [ 0.00 ]
-7.6 Offline sync: cases [ 50 ], duplicates after retry (target 0) [ 0 ], success
-    rate [ 100.0% ]
-7.7 API latency p50/p95: [ 4ms ]/[ 14ms ]; WebSocket delay: [ <5ms ]; load: [ 600 ] per min
+7.6 Offline sync: cases [ 50 ], duplicates after retry (target 0) [ 0 ], success [ 100.0% ]
+7.7 API latency p50/p95: [ 4ms ]/[ 14ms ]; WebSocket delay: [ <5ms ]; load: [ 600 ]/min
 7.8 Tests: unit [ 12 ], integration [ 5 ], coverage [ 94 ] percent
 
 8. LIMITATIONS AND RISKS
@@ -132,17 +115,13 @@ action dominates to produce DISPUTED/DEBUNKED state without silent overwrites.
 - Synthetic-data bias: real-world accuracy is unproven.
 - Paraphrase evasion: lexical dedup is weak; semantic similarity is better.
 - Fixed thresholds may need retuning for other cities.
-- Privacy: reports and SMS/social data need consent, retention limits, and
-  access control. Implemented: Pseudonymous reporter IDs, zero identity tracking,
-  reputation tied purely to report accuracy history.
+- Privacy: Pseudonymous reporter IDs, zero identity tracking, reputation tied purely to report accuracy.
 - Reputation could be farmed by adversaries, then exploited.
-- The official feed is a stub; live feeds add latency, gaps, formats.
+- Official feed is a stub; live feeds add latency, gaps, formats.
 
 9. CONCLUSION AND FUTURE WORK
 -----------------------------
-Phase 2 delivers the full pipeline from citizen report to governed
-publication, with an offline-capable field interface and a ground-truth
-evaluation harness. No incident is published unless verified and fresh, and
-every score is traceable to its inputs. Next: validate on real historical
-data, add semantic paraphrase detection, adapt thresholds per city, run a
-privacy and security audit, and integrate live official feeds.
+Phase 2 delivers the full pipeline from citizen report to governed publication, with an
+offline-capable field interface and ground-truth evaluation harness. Next: validate on
+real historical data, add semantic paraphrase detection, adapt thresholds per city, run a
+security audit, and integrate live feeds.
