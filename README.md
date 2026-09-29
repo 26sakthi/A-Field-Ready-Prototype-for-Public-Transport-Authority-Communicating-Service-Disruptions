@@ -3,6 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://img.shields.io/badge/Tests-17%20passed-brightgreen.svg)](#-verify-it-works)
 
 A field-ready prototype for a **public transport authority communicating service disruptions**, where decision-makers cannot verify crowd-sourced reports quickly enough. VeriTransit ingests simulated citizen reports (location, time, corroborating sources, responder verification), **clusters** them into incidents, scores an **explainable confidence**, ranks by **priority**, and surfaces *verified, high-priority* incidents fast — with drill-down evidence, freshness/staleness states, an offline field-capture workflow, and a measurable experiment proving it beats manual triage.
 
@@ -18,6 +19,8 @@ A field-ready prototype for a **public transport authority communicating service
   - [2. Frontend](#2-frontend-dashboard)
   - [3. Drive It](#3-drive-it)
 - [Verify it Works](#-verify-it-works)
+- [API Reference](#-api-reference)
+- [Data Model & Schema](#-data-model--schema)
 - [The Five Role Views](#-the-five-role-views)
 - [Edge & Failure Cases](#-edge--failure-cases)
 - [Demo Script](#-demo-script)
@@ -34,6 +37,7 @@ A field-ready prototype for a **public transport authority communicating service
 | Implementation plan | [`docs/03-Implementation-Plan.md`](docs/03-Implementation-Plan.md) |
 | Limitations + benefits-vs-risks report | [`docs/04-Limitations.md`](docs/04-Limitations.md) |
 | Algorithm parameters & scoring formulas | [`docs/05-Algorithm-Parameters-And-Formulas.md`](docs/05-Algorithm-Parameters-And-Formulas.md) |
+| Testing guide & error boundaries | [`docs/06-Testing-And-Error-Boundaries.md`](docs/06-Testing-And-Error-Boundaries.md) |
 | Core algorithm / rules | [`backend/engine/`](backend/engine/) |
 | API + official-feed integration stub | [`backend/app/`](backend/app/), [`backend/simulator/official_feed_stub.py`](backend/simulator/official_feed_stub.py) |
 | Validation dataset (labelled, seeded simulator) | [`backend/simulator/generate.py`](backend/simulator/generate.py) |
@@ -54,7 +58,7 @@ graph TD;
     API --> Engine[Verification & Confidence Engine];
     Engine -->|cluster → independence → confidence → priority → state| Store[(In-memory Store)];
     Store -->|REST + WebSocket| PWA[React PWA <br> 5 role views];
-    PWA -.-> Offline[Offline Queue <br> localStorage + Service Worker];
+    PWA -.-> Offline[IndexedDB Queue <br> + Service Worker];
     Offline -.-> PWA;
 ```
 
@@ -76,7 +80,7 @@ python -m venv .venv
 .venv/Scripts/python -m uvicorn app.main:app --port 8000
 ```
 
-API is now running at `http://localhost:8000` (docs available at `/docs`).
+API is now running at `http://localhost:8000` (interactive docs at `/docs`).
 
 ### 2. Frontend (dashboard)
 
@@ -100,7 +104,7 @@ Open the printed URL (e.g., `http://localhost:5173`). The dev server proxies `/a
 
 ```bash
 cd backend
-.venv/Scripts/python -m pytest -q            # engine + 5 edge-case tests
+.venv/Scripts/python -m pytest -q            # 17 tests: engine + edge cases + stress tests
 .venv/Scripts/python -m metrics.experiment   # prints the full experiment JSON
 ```
 
@@ -114,13 +118,189 @@ cd backend
 | False-verified rate | 0.965 (act-on-all) | ≤ 0.05 | **0.00** ✓ |
 | Misinformation reached VERIFIED | — | 0 | **0** ✓ |
 
+See [`docs/06-Testing-And-Error-Boundaries.md`](docs/06-Testing-And-Error-Boundaries.md) for per-test rationale and error boundaries.
+
+---
+
+## 🔌 API Reference
+
+Base URL: `http://localhost:8000/api/v1` · Interactive docs: `http://localhost:8000/docs`
+
+All state-changing endpoints require an `actor_id` and `actor_role` in the request body. Every mutation is written to the audit log.
+
+### Ingestion
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| `POST` | `/reports` | `ReportIn` | `{ report_id, incident_id, location_state, incident }` | Single citizen report ingestion; triggers full pipeline |
+| `POST` | `/reports/batch` | `list[ReportIn]` | `{ ingested, incidents_touched }` | Bulk ingest for simulator/experiment |
+| `POST` | `/feeds/official` | `OfficialIn` | `{ official_event_id }` | Inject AVL/weather/IoT corroboration event |
+
+**`ReportIn` fields:**
+```
+reporter_id        str       Reporter pseudonymous ID
+category           str       flood | fire | breakdown | crowding | delay | safety | other
+text               str       Free-text description (optional)
+lat                float?    Decimal latitude (null → location_state=MISSING)
+lng                float?    Decimal longitude (null → location_state=MISSING)
+named_location     str       Human place name (optional)
+claimed_time       datetime? When the event occurred (null → time_state=MISSING)
+captured_offline_at datetime? Set when action was captured offline → DELAYED_SYNC
+severity_claimed   int       1–5 severity scale
+channel            str       app | sms | hotline | social
+photo_hash         str       SHA hash of attached photo blob (optional)
+```
+
+### Verification & Publishing
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| `POST` | `/incidents/{id}/verify` | `VerifyIn` | `{ verification_id, incident }` | CONFIRM / DENY / NEEDS_MORE from a responder or officer |
+| `POST` | `/incidents/{id}/publish` | `PublishIn` | `{ published, override, incident }` | Publish gate — `409` if not VERIFIED & non-stale (unless `override=true` + `justification`) |
+
+**`VerifyIn` fields:**
+```
+actor_id           str       Responder/officer pseudonymous ID
+actor_role         str       responder | officer | decision_maker | pio | analyst
+action             str       CONFIRM | DENY | NEEDS_MORE
+note               str       Optional justification note
+lat / lng          float?    Responder's GPS position at time of verification
+captured_offline_at datetime? Offline capture timestamp (preserved as truth)
+```
+
+### Queries
+
+| Method | Path | Query Params | Returns | Notes |
+|---|---|---|---|---|
+| `GET` | `/incidents` | `role`, `state`, `fresh_only`, `verified_only`, `sort` | `{ count, incidents[] }` | Role-filtered list; sort by `priority` (default), `confidence`, or `recent` |
+| `GET` | `/incidents/{id}` | — | `incident + breakdown` | Full incident detail with confidence breakdown |
+| `GET` | `/incidents/{id}/evidence` | — | `{ incident, reports[], verifications[], why_this_score, reporters[] }` | "Why this score" drill-down |
+
+### Offline Sync
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| `POST` | `/sync` | `{ actions: SyncAction[] }` | `{ results[] }` | Idempotent batch sync; each result has `status: applied | duplicate | conflict | error` |
+
+**`SyncAction` fields:**
+```
+client_uuid        str       Client-generated UUID (idempotency key)
+kind               str       report | verify
+payload            dict      Same fields as ReportIn / VerifyIn
+```
+
+### Admin & Metrics
+
+| Method | Path | Query Params | Returns | Notes |
+|---|---|---|---|---|
+| `GET` | `/audit` | `entity_id`, `limit` | `{ count, entries[] }` | Immutable audit trail; filterable by entity |
+| `GET` | `/metrics/live` | — | Live KPIs | Reports, incidents, verified counts, by-state breakdown |
+| `GET` | `/metrics/experiment` | `seeds=20` | Full experiment JSON | Runs reproducible TTVHP / precision / recall measurement |
+| `POST` | `/admin/replay` | `seed=42`, `compress=0.02` | Scenario metadata | Load storm scenario into live store for dashboard |
+| `POST` | `/admin/reset` | — | `{ reset: true }` | Clear all in-memory state |
+| `POST` | `/admin/refresh-freshness` | — | `{ changed[] }` | Manually tick freshness state machine |
+| `GET` | `/health` | — | `{ status, incidents, reports }` | Health check |
+
+### WebSocket
+
+| Path | Event types | Notes |
+|---|---|---|
+| `WS /ws/incidents` | `incident.update`, `incident.verified`, `incident.published`, `incident.synced`, `incident.freshness`, `official.update`, `scenario.loaded` | Pushes `{ event, incident }` on every state change |
+
+---
+
+## 🗄 Data Model & Schema
+
+The in-memory store ([`backend/app/store.py`](backend/app/store.py)) mirrors the schema that would be persisted in SQLite/Postgres+PostGIS.
+
+### `Report`
+```
+id                 str       Server-generated (rep_<uuid10>)
+reporter_id        str       Pseudonymous reporter identifier
+incident_id        str?      Assigned after clustering
+category           Category  Enum: FLOOD | FIRE | BREAKDOWN | CROWDING | DELAY | SAFETY | OTHER
+text               str       Raw report text
+lat / lng          float?    Decimal GPS coordinates (null if MISSING)
+named_location     str       Human station/place name
+severity_claimed   int       1–5
+claimed_time       datetime? Event time (null if MISSING)
+received_at        datetime  Server ingestion timestamp
+captured_offline_at datetime? Offline capture timestamp (truth anchor)
+location_state     FieldState PRESENT | MISSING | LOW_ACCURACY
+time_state         FieldState PRESENT | MISSING
+sync_state         SyncState  SYNCED | QUEUED | DELAYED_SYNC
+photo_hash         str       Hash of photo attachment
+truth_label        str?      Simulator ground-truth: "true:T1" | "noise" | "misinfo"
+```
+
+### `Incident`
+```
+id                 str       Server-generated (inc_<uuid10>)
+category           Category  Enum value (see Report)
+center_lat / lng   float?    Centroid of located reports (null if all MISSING)
+severity           int       Max claimed severity across reports
+confidence         float     0–100 explainable confidence score
+priority           float     0–100 triage queue priority
+verification_state VerificationState  UNVERIFIED | CORROBORATING | VERIFIED | DISPUTED | DEBUNKED
+freshness_state    FreshnessState     FRESH | RECENT | AGING | STALE | EXPIRED
+manipulation_flag  bool      True if coordinated burst detected
+publishable        bool      True only if VERIFIED and freshness in FRESH/RECENT/AGING
+published          bool      True after PIO/DM publishes
+independent_sources int      Count of distinct non-duplicate source reporters
+confirms / denies  int       Responder action tallies
+official_match     bool      True if matched to an official feed event
+report_ids         list[str] IDs of all attached reports
+first_reported_at  datetime  Onset timestamp (temporal window anchor)
+last_evidence_at   datetime  Latest report or verification timestamp
+breakdown          ConfidenceBreakdown  Per-signal score components (0–100 each)
+```
+
+### `ConfidenceBreakdown`
+```
+corroboration      float     w_c × S_corr × 100  (weight 0.25)
+reputation         float     w_r × S_rep  × 100  (weight 0.10)
+responder          float     w_v × S_resp × 100  (weight 0.35)
+official           float     w_o × S_off  × 100  (weight 0.20)
+recency            float     w_t × S_rec  × 100  (weight 0.10)
+total              float     Sum clamped 0–100
+```
+
+### `VerificationEvent`
+```
+id                 str       Server-generated (ver_<uuid10>)
+incident_id        str       FK → Incident
+actor_id           str       Pseudonymous actor
+actor_role         Role      RESPONDER | OFFICER | DECISION_MAKER | PIO | ANALYST
+action             VerifyAction  CONFIRM | DENY | NEEDS_MORE
+note               str       Optional justification
+lat / lng          float?    Actor GPS at time of action
+created_at         datetime  Server receipt timestamp
+captured_offline_at datetime? Offline capture timestamp (truth anchor)
+```
+
+### `AuditEntry`
+```
+id                 str       aud_<uuid10>
+entity_type        str       report | incident | official_event | scenario
+entity_id          str       FK to entity
+actor_id / role    str       Who performed the action
+change             str       Human-readable description of change
+created_at         datetime  UTC timestamp
+```
+
+**State enums (explicit, never null):**
+- `VerificationState`: `UNVERIFIED | CORROBORATING | VERIFIED | DISPUTED | DEBUNKED`
+- `FreshnessState`: `FRESH | RECENT | AGING | STALE | EXPIRED`
+- `FieldState` (location/time): `PRESENT | MISSING | LOW_ACCURACY`
+- `SyncState`: `SYNCED | QUEUED | DELAYED_SYNC`
+
 ---
 
 ## 👥 The Five Role Views
 
 | Role | View | What it does |
 |---|---|---|
-| 🧑‍🚒 **Field Responder** | Capture & Verify | Fast offline-first capture (GPS auto-fill, category chips, severity), one-tap confirm/deny; queues offline and syncs on reconnect with capture-time truth |
+| 🧑‍🚒 **Field Responder** | Capture & Verify | Fast offline-first capture (GPS auto-fill, category chips, severity), one-tap confirm/deny; queues offline in IndexedDB and syncs on reconnect with capture-time truth |
 | 👮 **Duty Officer** | Triage Queue | Incidents ranked by priority; confidence bar, freshness pill, drill-down evidence + "why this score" |
 | 🗺️ **Decision-Maker** | Situation Map | Self-contained SVG map (works offline), verified-only toggle, separate tray for unlocated incidents |
 | 📢 **Public Info Officer** | Comms Board | Verified-only cards with a publish gate (only VERIFIED, non-stale incidents publish) |
@@ -130,7 +310,7 @@ cd backend
 
 ## 🚧 Edge & Failure Cases
 
-All handled and covered by tests (`backend/tests/test_edge_cases.py`):
+All handled and covered by tests (`backend/tests/`):
 
 1. **Conflicting corroboration** → incident goes `DISPUTED`.
 2. **Stale / expired data** → auto-transitions `STALE` → `EXPIRED`, publish blocked.
@@ -145,7 +325,7 @@ All handled and covered by tests (`backend/tests/test_edge_cases.py`):
 1. **The Problem:** Load the storm scenario. In the Duty Officer view, note 574 raw reports collapsed into ~122 ranked incidents — the top items are VERIFIED-bound high-priority floods, not buried in noise.
 2. **Explainable Trust:** Drill into the top flood → the "why this score" panel shows the exact signals (corroboration + reputation + official match + recency).
 3. **Misinformation:** Open the ⚑ flagged Riverside cluster — 14 identical "evacuate now" posts from 2 accounts; confidence collapsed to ~20, held below VERIFIED.
-4. **Field / Offline:** In the Field Responder view, tick "Simulate offline", capture a report, untick — it syncs as `DELAYED_SYNC`.
+4. **Field / Offline:** In the Field Responder view, tick "Simulate offline", capture a report, untick — it syncs as `DELAYED_SYNC` from IndexedDB.
 5. **Publish Gate:** As PIO, try to publish a non-verified incident (blocked); verify one as Officer, then publish it.
 6. **Proof:** Analyst view → Run experiment → baseline vs. measured, all targets met.
 
